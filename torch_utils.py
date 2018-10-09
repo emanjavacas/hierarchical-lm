@@ -67,7 +67,7 @@ def flatten_padded_batch(batch, nwords):
     [[0], [1], [2], [3], [4], [5]]
     """
     output = []
-    for sent, sentlen in zip(batch.t(), nwords):
+    for sent, sentlen in zip(batch.transpose(0, 1), nwords):
         output.extend(list(sent[:sentlen].chunk(sentlen)))
 
     return torch.cat(output, dim=0)
