@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import utils
 import torch_utils
 from model import RNNLanguageModel
-from lstm import CustomBiLSTM
+from lstm import CustomBiLSTM, CustomLSTM
 
 
 class HierarchicalLanguageModel(RNNLanguageModel):
@@ -59,7 +59,7 @@ class HierarchicalLanguageModel(RNNLanguageModel):
 
         # output
         self.cout_embs = nn.Embedding(cvocab, cemb_dim, padding_idx=encoder.char.pad)
-        self.cout_rnn = CustomBiLSTM(cemb_dim + hidden_dim, hidden_dim)
+        self.cout_rnn = CustomLSTM(cemb_dim + hidden_dim, hidden_dim)
         self.proj = nn.Linear(hidden_dim, cvocab)
 
         self.init()
