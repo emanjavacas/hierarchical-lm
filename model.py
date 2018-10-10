@@ -87,6 +87,9 @@ class RNNLanguageModel(nn.Module):
         return args, kwargs
 
     def save(self, dirpath, encoder):
+        if not os.path.isdir(dirpath):
+            os.makedirs(dirpath)
+
         fpath = os.path.join(dirpath, self.modelname)
 
         # serialize weights
@@ -242,11 +245,11 @@ class RNNLanguageModel(nn.Module):
 
         word = [encoder.word.bos] * batch  # (batch)
         word = torch.tensor(word, dtype=torch.int64).to(device)
-        nwords = [1] * batch    # same nwords per step
+        nwords = torch.tensor([1] * batch).to(device)  # same nwords per step
         # (3 x batch)
         char = [[encoder.char.bos, encoder.char.bol, encoder.char.eos]] * batch
         char = torch.tensor(char, dtype=torch.int64).to(device).t()
-        nchars = [3] * batch
+        nchars = torch.tensor([3] * batch).to(device)
 
         output = collections.defaultdict(list)
         mask = torch.ones(batch, dtype=torch.int64).to(device)
@@ -336,12 +339,14 @@ class RNNLanguageModel(nn.Module):
 
         return (hyps, conds), probs, hidden, cache
 
-    def dev(self, corpus, encoder, best_loss, fails, nsamples=10):
+    def dev(self, corpus, encoder, best_loss, fails, batch_size,
+            nsamples=10, target_dir='./models'):
+
         hidden = None
         tloss = tinsts = 0
 
         with torch.no_grad():
-            for sents, conds in tqdm.tqdm(corpus.get_batches(1)):
+            for sents, conds in tqdm.tqdm(corpus.get_batches(batch_size)):
                 (words, nwords), (chars, nchars), conds = encoder.transform_batch(
                     sents, conds, self.device)
                 logits, hidden = self(words, nwords, chars, nchars, conds, hidden)
@@ -356,7 +361,7 @@ class RNNLanguageModel(nn.Module):
             print("New best dev loss: {:g}".format(tloss))
             best_loss = tloss
             fails = 0
-            self.save("./generators/", encoder)
+            self.save(target_dir, encoder)
         else:
             fails += 1
             print("Failed {} time to improve best dev loss: {}".format(fails, best_loss))
@@ -372,7 +377,7 @@ class RNNLanguageModel(nn.Module):
 
     def train_model(self, corpus, encoder, epochs=5, lr=0.001, clipping=5, dev=None,
                     patience=3, minibatch=15, trainer='Adam', repfreq=1000, checkfreq=0,
-                    lr_weight=1, bptt=1):
+                    lr_weight=1, bptt=1, target_dir='./models'):
 
         # get trainer
         if trainer.lower() == 'adam':
@@ -429,7 +434,8 @@ class RNNLanguageModel(nn.Module):
 
                 if dev and checkfreq and idx and idx % (checkfreq // minibatch) == 0:
                     self.eval()
-                    best_loss, fails = self.dev(dev, encoder, best_loss, fails)
+                    best_loss, fails = self.dev(dev, encoder, best_loss, fails,
+                                                minibatch, target_dir=target_dir)
                     self.train()
                     # update lr
                     if fails > 0:
@@ -439,7 +445,8 @@ class RNNLanguageModel(nn.Module):
 
             if dev and not checkfreq:
                 self.eval()
-                best_loss, fails = self.dev(dev, encoder, best_loss, fails)
+                best_loss, fails = self.dev(dev, encoder, best_loss, fails,
+                                            minibatch, target_dir=target_dir)
                 self.train()
                 # update lr
                 if fails > 0:

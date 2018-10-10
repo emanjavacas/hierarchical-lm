@@ -81,7 +81,7 @@ class CustomLSTM(nn.Module):
         output = torch.stack(output, 0)
         return output, hx
 
-    def forward(self, input_, length, hidden=None, backward=False):
+    def forward(self, input_, length=None, hidden=None, backward=False):
         max_time, batch_size, _ = input_.size()
 
         if hidden is None:
@@ -89,6 +89,11 @@ class CustomLSTM(nn.Module):
             c0 = input_.new(batch_size, self.hidden_size).zero_()
         else:
             h0, c0 = hidden
+            if h0.dim() == 3:
+                h0, c0 = h0.squeeze(0), c0.squeeze(0)
+
+        if length is None:
+            length = input_.new([max_time] * batch_size).long()
 
         output, (h_n, c_n) = CustomLSTM._forward_rnn(
             self.cell, input_, (h0, c0), length, backward=backward)
@@ -103,8 +108,16 @@ class CustomBiLSTM(nn.Module):
         self.bwd = CustomLSTM(input_size, hidden_size)
 
     def forward(self, inputs, lengths, hidden=None):
-        fwd_outs, (fwd_h, fwd_c) = self.fwd(inputs, lengths, hidden=hidden)
-        bwd_outs, (bwd_h, bwd_c) = self.bwd(inputs, lengths, hidden=hidden, backward=True)
+        fwd_hidden, bwd_hidden = None, None
+        if hidden is not None:
+            h0, c0 = hidden
+            (fwd_h0, bwd_h0), (fwd_c0, bwd_c0) = h0.split(1, dim=0), c0.split(1, dim=0)
+            fwd_hidden, bwd_hidden = (fwd_h0, fwd_c0), (bwd_h0, bwd_c0)
+
+        fwd_outs, (fwd_h, fwd_c) = self.fwd(
+            inputs, lengths, hidden=fwd_hidden)
+        bwd_outs, (bwd_h, bwd_c) = self.bwd(
+            inputs, lengths, hidden=bwd_hidden, backward=True)
 
         outs = torch.cat([fwd_outs, bwd_outs], dim=2)
         h, c = (torch.cat([fwd_h, bwd_h], dim=0), torch.cat([fwd_c, bwd_c], dim=0))

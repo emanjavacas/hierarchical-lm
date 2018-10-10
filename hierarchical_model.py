@@ -215,11 +215,11 @@ class HierarchicalLanguageModel(RNNLanguageModel):
 
         word = [encoder.word.bos] * batch  # (batch)
         word = torch.tensor(word, dtype=torch.int64).to(device)
-        nwords = [1] * batch    # same nwords per step
+        nwords = torch.tensor([1] * batch).to(device)  # same nwords per step
         # (3 x batch)
         char = [[encoder.char.bos, encoder.char.bol, encoder.char.eos]] * batch
         char = torch.tensor(char, dtype=torch.int64).to(device).t()
-        nchars = [3] * batch
+        nchars = torch.tensor([3] * batch).to(device)
 
         output = collections.defaultdict(list)
         mask = torch.ones(batch, dtype=torch.int64).to(device)
@@ -260,7 +260,7 @@ class HierarchicalLanguageModel(RNNLanguageModel):
                     # (1 x batch x cemb_dim + hidden_dim)
                     cemb = torch.cat([self.cout_embs(cinp.unsqueeze(0)), outs], -1)
                     # (1 x batch x hidden_dim)
-                    couts, chidden = self.cout_rnn(cemb, chidden)
+                    couts, chidden = self.cout_rnn(cemb, hidden=chidden)
                     logits = self.proj(couts).squeeze(0)
                     # sample
                     logprob = F.log_softmax(logits, dim=-1)
@@ -375,3 +375,4 @@ if __name__ == '__main__':
                    dev=dev, lr=args.lr, trainer=args.trainer, clipping=args.clipping,
                    repfreq=args.repfreq, checkfreq=args.checkfreq,
                    lr_weight=args.lr_weight, bptt=args.bptt)
+
