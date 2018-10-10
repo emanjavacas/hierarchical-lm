@@ -337,8 +337,6 @@ class RNNLanguageModel(nn.Module):
         return (hyps, conds), probs, hidden, cache
 
     def dev(self, corpus, encoder, best_loss, fails, nsamples=10):
-        self.eval()
-
         hidden = None
         tloss = tinsts = 0
 
@@ -370,8 +368,6 @@ class RNNLanguageModel(nn.Module):
             print(hyps[0], conds)  # only print first item in batch
         print()
 
-        self.train()
-
         return best_loss, fails
 
     def train_model(self, corpus, encoder, epochs=5, lr=0.001, clipping=5, dev=None,
@@ -380,7 +376,7 @@ class RNNLanguageModel(nn.Module):
 
         # get trainer
         if trainer.lower() == 'adam':
-            trainer = torch.optim.Adam(self.parameters(), lr=lr, amsgrad=True)
+            trainer = torch.optim.Adam(self.parameters(), lr=lr, amsgrad=False)
         elif trainer.lower() == 'sgd':
             trainer = torch.optim.SGD(self.parameters(), lr=lr)
         else:
@@ -432,10 +428,9 @@ class RNNLanguageModel(nn.Module):
                     start = time.time()
 
                 if dev and checkfreq and idx and idx % (checkfreq // minibatch) == 0:
-                    try:
-                        best_loss, fails = self.dev(dev, encoder, best_loss, fails)
-                    except Exception:
-                        print("Oopsie during evaluation")
+                    self.eval()
+                    best_loss, fails = self.dev(dev, encoder, best_loss, fails)
+                    self.train()
                     # update lr
                     if fails > 0:
                         for pgroup in trainer.param_groups:
@@ -443,10 +438,9 @@ class RNNLanguageModel(nn.Module):
                         print(trainer)
 
             if dev and not checkfreq:
-                try:
-                    best_loss, fails = self.dev(dev, encoder, best_loss, fails)
-                except Exception:
-                    print("Oopsie during evaluation")
+                self.eval()
+                best_loss, fails = self.dev(dev, encoder, best_loss, fails)
+                self.train()
                 # update lr
                 if fails > 0:
                     for pgroup in trainer.param_groups:
