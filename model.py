@@ -340,7 +340,7 @@ class RNNLanguageModel(nn.Module):
 
         return (hyps, conds), probs, hidden, cache
 
-    def dev(self, corpus, encoder, best_loss, fails, batch_size,
+    def dev(self, corpus, encoder, batch_size, best_loss, fails, trainer, lr_weight,
             nsamples=10, target_dir='./models'):
 
         hidden = None
@@ -366,25 +366,35 @@ class RNNLanguageModel(nn.Module):
         else:
             fails += 1
             print("Failed {} time to improve best dev loss: {}".format(fails, best_loss))
+            # update lr
+            for pgroup in trainer.param_groups:
+                pgroup['lr'] = pgroup['lr'] * lr_weight
+            print(trainer)
 
         print("Sampling #{} examples".format(nsamples))
         print()
         for _ in range(nsamples):
-            (hyps, conds), _, _, _ = self.sample(encoder)
-            print(hyps[0], conds)  # only print first item in batch
+            try:
+                (hyps, conds), _, _, _ = self.sample(encoder)
+                print(hyps[0], conds)  # only print first item in batch
+            except Exception as e:
+                print("Ooopsie while generating", str(e))
         print()
 
         return best_loss, fails
 
     def train_model(self, corpus, encoder, epochs=5, lr=0.001, clipping=5, dev=None,
-                    patience=3, minibatch=15, trainer='Adam', repfreq=1000, checkfreq=0,
-                    lr_weight=1, bptt=1, target_dir='./models'):
+                    weight_decay=0, minibatch=15, patience=3, trainer='Adam',
+                    repfreq=1000, checkfreq=0, lr_weight=1, bptt=1,
+                    target_dir='./models'):
 
         # get trainer
         if trainer.lower() == 'adam':
-            trainer = torch.optim.Adam(self.parameters(), lr=lr, amsgrad=False)
+            trainer = torch.optim.Adam(
+                self.parameters(), lr=lr, amsgrad=False, weight_decay=weight_decay)
         elif trainer.lower() == 'sgd':
-            trainer = torch.optim.SGD(self.parameters(), lr=lr)
+            trainer = torch.optim.SGD(
+                self.parameters(), lr=lr, weight_decay=weight_decay)
         else:
             raise ValueError("Unknown trainer: {}".format(trainer))
         print(trainer)
@@ -428,32 +438,24 @@ class RNNLanguageModel(nn.Module):
 
                 if idx and idx % (repfreq // minibatch) == 0:
                     speed = int(tinsts / (time.time() - start))
-                    print("Epoch {:<3} items={:<10} loss={:<10g} items/sec={}"
-                          .format(e, idx, self.loss_formatter(tloss/tinsts), speed))
+                    print("Epoch {:<3} items={:<10} loss={:<10g} items/sec={}".format(
+                        e, idx * minibatch, self.loss_formatter(tloss/tinsts), speed))
                     tinsts = tloss = 0.0
                     start = time.time()
 
                 if dev and checkfreq and idx and idx % (checkfreq // minibatch) == 0:
                     self.eval()
-                    best_loss, fails = self.dev(dev, encoder, best_loss, fails,
-                                                minibatch, target_dir=target_dir)
+                    best_loss, fails = self.dev(
+                        dev, encoder, minibatch, best_loss, fails, trainer, lr_weight,
+                        target_dir=target_dir)
                     self.train()
-                    # update lr
-                    if fails > 0:
-                        for pgroup in trainer.param_groups:
-                            pgroup['lr'] = pgroup['lr'] * lr_weight
-                        print(trainer)
 
             if dev and not checkfreq:
                 self.eval()
-                best_loss, fails = self.dev(dev, encoder, best_loss, fails,
-                                            minibatch, target_dir=target_dir)
+                best_loss, fails = self.dev(
+                    dev, encoder, minibatch, best_loss, fails, trainer, lr_weight,
+                    target_dir=target_dir)
                 self.train()
-                # update lr
-                if fails > 0:
-                    for pgroup in trainer.param_groups:
-                        pgroup['lr'] = pgroup['lr'] * lr_weight
-                    print(trainer)
 
 
 if __name__ == '__main__':
