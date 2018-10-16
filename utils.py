@@ -173,9 +173,10 @@ def dummy_processor(line):
 
 
 class LineCorpus:
-    def __init__(self, fpath, processor=dummy_processor, **kwargs):
+    def __init__(self, fpath, buffer_size=100000, processor=dummy_processor, **kwargs):
         self.fpath = fpath
         self.processor = processor
+        self.buffer_size = buffer_size
 
     def __iter__(self):
         with open(self.fpath) as f:
@@ -184,20 +185,25 @@ class LineCorpus:
                 if line:
                     yield self.processor(line)
 
-    def get_batches(self, batch_size):
-        data = chunks(iter(self), batch_size)
-        while True:
-            try:
-                # [[(line1, {}), (line2, {}), ...], ...]
-                batches = [next(data) for _ in range(batch_size)]
-                # [((line1, {}), (line3, {}), ...), ...]
-                batches = list(zip(*batches))
-                for batch in batches:
-                    sents, conds = zip(*batch)
-                    yield sents, conds
+    def prepare_buffer(self, buf, nbatches):
+        buf = list(chunks(buf, nbatches))
+        for batch in zip(*buf):
+            sents, conds = zip(*batch)
+            yield sents, conds
 
-            except StopIteration:
-                return
+    def get_batches(self, batch_size):
+        buf = []
+        for line in iter(self):
+            buf.append(line)
+
+            if len(buf) == self.buffer_size:
+                nbatches, rest = divmod(len(buf), batch_size)
+                yield from self.prepare_buffer(buf[:nbatches * batch_size], nbatches)
+                buf = buf[-rest:]
+
+        if buf:
+            nbatches = len(buf) // batch_size
+            yield from self.prepare_buffer(buf[:nbatches * batch_size], nbatches)
 
 
 def get_final_phonology(phon):
