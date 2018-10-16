@@ -17,7 +17,7 @@ from lstm import CustomBiLSTM, CustomLSTM
 
 class HierarchicalLanguageModel(RNNLanguageModel):
     def __init__(self, encoder, layers, wemb_dim, cemb_dim, hidden_dim, cond_dim,
-                 dropout=0.0):
+                 custom_cemb_cell=False, dropout=0.0):
 
         self.layers = layers
         self.wemb_dim = wemb_dim
@@ -25,6 +25,7 @@ class HierarchicalLanguageModel(RNNLanguageModel):
         self.hidden_dim = hidden_dim
         self.cond_dim = cond_dim
         self.dropout = dropout
+        self.custom_cemb_cell = custom_cemb_cell
         self.modelname = self.get_modelname()
         super(RNNLanguageModel, self).__init__()
 
@@ -36,9 +37,14 @@ class HierarchicalLanguageModel(RNNLanguageModel):
         self.register_buffer('nll_weight', nll_weight)
 
         # embeddings
-        self.wembs = nn.Embedding(wvocab, wemb_dim, padding_idx=encoder.word.pad)
+        self.wembs = None
+        if wemb_dim > 0:
+            self.wembs = nn.Embedding(wvocab, wemb_dim, padding_idx=encoder.word.pad)
         self.cembs = nn.Embedding(cvocab, cemb_dim, padding_idx=encoder.char.pad)
-        self.cembs_rnn = CustomBiLSTM(cemb_dim, cemb_dim//2)
+        if custom_cemb_cell:
+            self.cembs_rnn = CustomBiLSTM(cemb_dim, cemb_dim//2)
+        else:
+            self.cembs_rnn = nn.LSTM(cemb_dim, cemb_dim//2, bidirectional=True)
         input_dim = wemb_dim + cemb_dim
 
         # conds
@@ -52,14 +58,12 @@ class HierarchicalLanguageModel(RNNLanguageModel):
         # rnn
         rnn = []
         for layer in range(layers):
-            rnn_inp = input_dim if layer == 0 else hidden_dim
-            rnn_hid = hidden_dim
-            rnn.append(nn.LSTM(rnn_inp, rnn_hid))
+            rnn.append(nn.LSTM(input_dim if layer == 0 else hidden_dim, hidden_dim))
         self.rnn = nn.ModuleList(rnn)
 
         # output
         self.cout_embs = nn.Embedding(cvocab, cemb_dim, padding_idx=encoder.char.pad)
-        self.cout_rnn = CustomLSTM(cemb_dim + hidden_dim, hidden_dim)
+        self.cout_rnn = nn.LSTM(cemb_dim + hidden_dim, hidden_dim)
         self.proj = nn.Linear(hidden_dim, cvocab)
 
         self.init()
@@ -80,17 +84,18 @@ class HierarchicalLanguageModel(RNNLanguageModel):
 
     def get_args_and_kwargs(self):
         args = self.layers, self.wemb_dim, self.cemb_dim, self.hidden_dim, self.cond_dim
-        kwargs = {'dropout': self.dropout}
+        kwargs = {'dropout': self.dropout, 'custom_cemb_cell': self.custom_cemb_cell}
         return args, kwargs
 
     def forward(self, word, nwords, char, nchars, conds, hidden=None):
         # - embeddings
+        embs = []
         # (seq x batch x wemb_dim)
-        wembs = self.wembs(word)
+        if self.wembs is not None:
+            embs.append(self.wembs(word))
         # (seq x batch x cemb_dim)
-        cembs = self.embed_chars(char, nchars, nwords)
-
-        embs = torch.cat([wembs, cembs], -1)
+        embs.append(self.embed_chars(char, nchars, nwords))
+        embs = torch.cat(embs, -1)
 
         # - conditions
         if conds:
@@ -146,17 +151,20 @@ class HierarchicalLanguageModel(RNNLanguageModel):
         # (nchars x nwords - batch x cemb_dim + hidden_dim)
         cemb = torch.cat([self.cout_embs(char), outs.expand(len(char), -1, -1)], -1)
         # run rnn
+        chidden = None
         nchars = nchars[index]
         sort, unsort = torch_utils.get_sort_unsort(nchars)
-        # (nchars x nwords - batch x hidden_dim)
         cemb, nchars = cemb[:, sort], nchars[sort]
         if isinstance(self.cout_rnn, nn.RNNBase):
             couts, _ = self.cout_rnn(
-                nn.utils.rnn.pack_padded_sequence(cemb, nchars))
+                nn.utils.rnn.pack_padded_sequence(cemb, nchars), chidden)
             couts, _ = nn.utils.rnn.pad_packed_sequence(couts)
         else:
-            couts, _ = self.cout_rnn(cemb, nchars)
+            couts, _ = self.cout_rnn(cemb, chidden, nchars)
+        # (nchars x nwords - batch x hidden_dim)
         couts = couts[:, unsort]
+        # dropout!: char-level output dropout
+        couts = torch_utils.sequential_dropout(couts, self.dropout, self.training)
         # logits: (nchars x nwords - batch x vocab)
         logits = self.proj(couts)
 
@@ -233,9 +241,11 @@ class HierarchicalLanguageModel(RNNLanguageModel):
                     break
 
                 # embeddings
-                wemb = self.wembs(word.unsqueeze(0))
-                cemb = self.embed_chars(char, nchars, nwords)
-                embs = torch.cat([wemb, cemb], -1)
+                embs = []
+                if self.wembs is not None:
+                    embs.append(self.wembs(word.unsqueeze(0)))
+                embs.append(self.embed_chars(char, nchars, nwords))
+                embs = torch.cat(embs, -1)
                 if conds:
                     embs = torch.cat([embs, *bconds], -1)
 
@@ -260,7 +270,7 @@ class HierarchicalLanguageModel(RNNLanguageModel):
                     # (1 x batch x cemb_dim + hidden_dim)
                     cemb = torch.cat([self.cout_embs(cinp.unsqueeze(0)), outs], -1)
                     # (1 x batch x hidden_dim)
-                    couts, chidden = self.cout_rnn(cemb, hidden=chidden)
+                    couts, chidden = self.cout_rnn(cemb, chidden)
                     logits = self.proj(couts).squeeze(0)
                     # sample
                     logprob = F.log_softmax(logits, dim=-1)
@@ -333,6 +343,7 @@ if __name__ == '__main__':
     # train
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--lr_weight', type=float, default=1.0)
+    parser.add_argument('--weight_decay', type=float, default=1.2e-6)
     parser.add_argument('--trainer', default='Adam')
     parser.add_argument('--clipping', type=float, default=5.0)
     parser.add_argument('--epochs', type=int, default=20)
@@ -346,7 +357,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', default='cpu')
     # extra
     parser.add_argument('--penn', action='store_true')
-
+    parser.add_argument('--custom_cemb_cell', action='store_true')
     args = parser.parse_args()
 
     from utils import CorpusEncoder, LineCorpus
@@ -364,7 +375,7 @@ if __name__ == '__main__':
     print("Building model")
     lm = HierarchicalLanguageModel(
         encoder, args.layers, args.wemb_dim, args.cemb_dim,
-        args.hidden_dim, args.cond_dim, dropout=args.dropout)
+        args.hidden_dim, args.cond_dim, dropout=args.dropout, custom_cemb_cell=args.custom_cemb_cell)
     print(lm)
     print("Model parameters: {}".format(sum(p.nelement() for p in lm.parameters())))
     print("Storing model to path {}".format(lm.modelname))
@@ -374,5 +385,5 @@ if __name__ == '__main__':
     lm.train_model(train, encoder, epochs=args.epochs, minibatch=args.minibatch,
                    dev=dev, lr=args.lr, trainer=args.trainer, clipping=args.clipping,
                    repfreq=args.repfreq, checkfreq=args.checkfreq,
+                   weight_decay=args.weight_decay,
                    lr_weight=args.lr_weight, bptt=args.bptt)
-

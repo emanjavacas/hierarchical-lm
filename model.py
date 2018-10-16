@@ -15,6 +15,7 @@ import tqdm
 
 import utils
 import torch_utils
+from lstm import CustomBiLSTM
 
 
 class RNNLanguageModel(nn.Module):
@@ -41,7 +42,7 @@ class RNNLanguageModel(nn.Module):
         # embeddings
         self.wembs = nn.Embedding(wvocab, wemb_dim, padding_idx=encoder.word.pad)
         self.cembs = nn.Embedding(cvocab, cemb_dim, padding_idx=encoder.char.pad)
-        self.cembs_rnn = nn.LSTM(cemb_dim, cemb_dim//2, bidirectional=True)
+        self.cembs_rnn = CustomBiLSTM(cemb_dim, cemb_dim//2)
         input_dim = wemb_dim + cemb_dim
 
         # conds
@@ -136,13 +137,13 @@ class RNNLanguageModel(nn.Module):
             _, hidden = self.cembs_rnn(
                 nn.utils.rnn.pack_padded_sequence(cembs[:, csort], nchars[csort]))
         else:
-            _, hidden = self.cembs_rnn(cembs[:, csort], nchars[csort])
+            _, hidden = self.cembs_rnn(cembs[:, csort], lengths=nchars[csort])
         if isinstance(hidden, tuple):
             hidden = hidden[0]
 
-        nwords = nwords.tolist()
-        cembs = hidden[:, cunsort, :].transpose(0, 1).contiguous().view(sum(nwords), -1)
-        cembs = torch_utils.pad_flat_batch(cembs, nwords, max(nwords))
+        cembs = hidden[:, cunsort, :].transpose(0, 1).contiguous()
+        cembs = cembs.view(sum(nwords).item(), -1)
+        cembs = torch_utils.pad_flat_batch(cembs, nwords, max(nwords).item())
 
         return cembs
 

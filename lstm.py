@@ -22,13 +22,15 @@ class CustomLSTMCell(nn.Module):
 
     def reset_parameters(self):
         """
-        Initialize with standard init from PyTorch source
-        or from recurrent batchnorm paper https://arxiv.org/abs/1603.09025.
+        Initialization from dynet
         """
-        stdv = 1.0 / math.sqrt(self.hidden_size)
-        nn.init.uniform_(self.weight_hh, -stdv, stdv)
-        nn.init.uniform_(self.weight_ih, -stdv, stdv)
+        nn.init.xavier_uniform_(self.weight_hh)
+        nn.init.xavier_uniform_(self.weight_ih)
+        # stdv = 1.0 / math.sqrt(self.hidden_size)
+        # for weight in self.parameters():
+        #     weight.data.uniform_(-stdv, stdv)
         nn.init.constant_(self.bias, 0)
+        # nn.init.constant_(self.bias[self.hidden_size: 2 * self.hidden_size], 1.0)
 
     def forward(self, input_, hx):
         """
@@ -47,7 +49,7 @@ class CustomLSTMCell(nn.Module):
         bias = self.bias.unsqueeze(0).expand(batch_size, *self.bias.size())
         wi = torch.mm(input_, self.weight_ih)
         wh = torch.mm(h_0, self.weight_hh)
-        f, i, o, g = torch.split(wh + wi + bias, self.hidden_size, dim=1)
+        i, f, o, g = torch.split(wh + wi + bias, self.hidden_size, dim=1)
         c_1 = torch.sigmoid(f + 1) * c_0 + torch.sigmoid(i) * torch.tanh(g)
         h_1 = torch.sigmoid(o) * torch.tanh(c_1)
         return h_1, c_1
@@ -67,12 +69,12 @@ class CustomLSTM(nn.Module):
         self.cell = CustomLSTMCell(input_size=input_size, hidden_size=hidden_size)
 
     @staticmethod
-    def _forward_rnn(cell, input_, hx, length, backward=False):
+    def _forward_rnn(cell, input_, hx, lengths, backward=False):
         max_time = input_.size(0)
         output = []
         for time in reversed(range(max_time)) if backward else range(max_time):
             h_next, c_next = cell(input_=input_[time], hx=hx)
-            mask = (time < length).float().unsqueeze(1).expand_as(h_next)
+            mask = (time < lengths).float().unsqueeze(1).expand_as(h_next)
             h_next = h_next * mask + hx[0] * (1 - mask)
             c_next = c_next * mask + hx[1] * (1 - mask)
             hx_next = (h_next, c_next)
@@ -81,7 +83,7 @@ class CustomLSTM(nn.Module):
         output = torch.stack(output, 0)
         return output, hx
 
-    def forward(self, input_, length=None, hidden=None, backward=False):
+    def forward(self, input_, hidden=None, lengths=None, backward=False):
         max_time, batch_size, _ = input_.size()
 
         if hidden is None:
@@ -92,11 +94,11 @@ class CustomLSTM(nn.Module):
             if h0.dim() == 3:
                 h0, c0 = h0.squeeze(0), c0.squeeze(0)
 
-        if length is None:
-            length = input_.new([max_time] * batch_size).long()
+        if lengths is None:
+            lengths = input_.new([max_time] * batch_size).long()
 
         output, (h_n, c_n) = CustomLSTM._forward_rnn(
-            self.cell, input_, (h0, c0), length, backward=backward)
+            self.cell, input_, (h0, c0), lengths, backward=backward)
 
         return output, (h_n.unsqueeze(0), c_n.unsqueeze(0))
 
@@ -107,7 +109,7 @@ class CustomBiLSTM(nn.Module):
         self.fwd = CustomLSTM(input_size, hidden_size)
         self.bwd = CustomLSTM(input_size, hidden_size)
 
-    def forward(self, inputs, lengths, hidden=None):
+    def forward(self, inputs, hidden=None, lengths=None):
         fwd_hidden, bwd_hidden = None, None
         if hidden is not None:
             h0, c0 = hidden
@@ -115,9 +117,9 @@ class CustomBiLSTM(nn.Module):
             fwd_hidden, bwd_hidden = (fwd_h0, fwd_c0), (bwd_h0, bwd_c0)
 
         fwd_outs, (fwd_h, fwd_c) = self.fwd(
-            inputs, lengths, hidden=fwd_hidden)
+            inputs, fwd_hidden, lengths=lengths)
         bwd_outs, (bwd_h, bwd_c) = self.bwd(
-            inputs, lengths, hidden=bwd_hidden, backward=True)
+            inputs, bwd_hidden, lengths=lengths, backward=True)
 
         outs = torch.cat([fwd_outs, bwd_outs], dim=2)
         h, c = (torch.cat([fwd_h, bwd_h], dim=0), torch.cat([fwd_c, bwd_c], dim=0))
