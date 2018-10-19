@@ -353,6 +353,7 @@ if __name__ == '__main__':
     parser.add_argument('--minibatch', type=int, default=20)
     parser.add_argument('--repfreq', type=int, default=1000)
     parser.add_argument('--checkfreq', type=int, default=0)
+    parser.add_argument('--pretrained_wembs')
     # pytorch
     parser.add_argument('--device', default='cpu')
     # extra
@@ -360,28 +361,31 @@ if __name__ == '__main__':
     parser.add_argument('--custom_cemb_cell', action='store_true')
     args = parser.parse_args()
 
-    from utils import CorpusEncoder, LineCorpus
-
     print("Encoding corpus")
     start = time.time()
     conds = None
     if args.conds:
         conds = set(args.conds.split(','))
-    train, dev = LineCorpus(args.train, conds=conds), LineCorpus(args.dev, conds=conds)
-    encoder = CorpusEncoder.from_corpus(
+    train = utils.LineCorpus(args.train, conds=conds)
+    dev = utils.LineCorpus(args.dev, conds=conds)
+    encoder = utils.CorpusEncoder.from_corpus(
         train, dev, most_common=args.maxsize, reverse=args.reverse)
     print("... took {} secs".format(time.time() - start))
 
     print("Building model")
     lm = HierarchicalLanguageModel(
         encoder, args.layers, args.wemb_dim, args.cemb_dim,
-        args.hidden_dim, args.cond_dim, dropout=args.dropout, custom_cemb_cell=args.custom_cemb_cell)
+        args.hidden_dim, args.cond_dim, dropout=args.dropout,
+        custom_cemb_cell=args.custom_cemb_cell)
     print(lm)
     print("Model parameters: {}".format(sum(p.nelement() for p in lm.parameters())))
-    print("Storing model to path {}".format(lm.modelname))
+    if args.pretrained_wembs:
+        print("Initializing embeddings from", args.pretrained_wembs)
+        torch_utils.init_pretrained_embeddings(args.pretrained_wembs, encoder, lm.wembs)
     lm.to(args.device)
 
     print("Training model")
+    print("Storing model to path {}".format(lm.modelname))
     lm.train_model(train, encoder, epochs=args.epochs, minibatch=args.minibatch,
                    dev=dev, lr=args.lr, trainer=args.trainer, clipping=args.clipping,
                    repfreq=args.repfreq, checkfreq=args.checkfreq,

@@ -143,3 +143,29 @@ def batch_index_add(t, index, src):
     ex = torch.arange(0, batch, out=t.new()).unsqueeze(1).long() * vocab
     added = t.view(-1).index_add(0, (index + ex).view(-1), src.view(-1))
     return added.view(batch, vocab)
+
+
+def init_pretrained_embeddings(path, encoder, embedding):
+    with open(path) as f:
+        inits = 0
+        for idx, line in enumerate(f):
+            word, *vec = line.split()
+
+            # check sizes
+            if len(vec) != embedding.weight.size(1):
+                if idx == 0:
+                    print("Skipping header")
+                    continue
+                else:
+                    raise ValueError("Unexpected embeddings size: {}".format(dim))
+
+            # add word
+            if word in encoder.word.w2i:
+                embedding.weight.data[encoder.word.w2i[word], :].copy_(
+                    torch.tensor([float(v) for v in vec]))
+                inits += 1
+
+    if embedding.padding_idx is not None:
+        embedding.weight.data[embedding.padding_idx].zero_()
+
+    print("Initialized {}/{} embeddings".format(inits, embedding.num_embeddings))
