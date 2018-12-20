@@ -303,8 +303,15 @@ if __name__ == '__main__':
     print("Storing model to path {}".format(lm.modelname))
     lm.to(args.device)
 
+    # trainer
+    trainer = getattr(torch.optim, args.trainer)(
+        lm.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    print(trainer)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        trainer, patience=1, factor=args.lr_weight)
+
     print("Training model")
-    lm.train_model(train, encoder, epochs=args.epochs, minibatch=args.minibatch,
-                   dev=dev, lr=args.lr, trainer=args.trainer, clipping=args.clipping,
-                   repfreq=args.repfreq, checkfreq=args.checkfreq,
-                   lr_weight=args.lr_weight, bptt=args.bptt)
+    lm.train_model(train, encoder, trainer, scheduler,
+                   epochs=args.epochs, minibatch=args.minibatch,
+                   dev=dev, clipping=args.clipping, bptt=args.bptt,
+                   repfreq=args.repfreq, checkfreq=args.checkfreq)

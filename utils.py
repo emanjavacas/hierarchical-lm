@@ -103,7 +103,7 @@ class CorpusEncoder:
 
         # create vocabs
         word = Vocab(w2i, most_common=most_common, bos=BOS, eos=EOS, unk=UNK, pad=PAD)
-        char = Vocab(c2i, eos=EOS, bos=BOS, unk=UNK, pad=PAD, eol=EOL, bol=BOL, space=' ')
+        char = Vocab(c2i, eos=EOS, bos=BOS, unk=UNK, pad=PAD, eol=EOL, bol=BOL)
         conds = {c: Vocab(cond_w2i) for c, cond_w2i in conds_w2i.items()}
 
         return cls(word, char, conds, **kwargs)
@@ -139,8 +139,10 @@ class CorpusEncoder:
         chars = []
         for sent in sents:
             sent = [self.char.transform(w) for w in sent]
-            sent = [[self.char.bos, self.char.bol, self.char.eos]] + sent
-            sent = sent + [[self.char.bos, self.char.eol, self.char.eos]]
+            if self.char.bol is not None:
+                sent = [[self.char.bos, self.char.bol, self.char.eos]] + sent
+            if self.char.eol is not None:
+                sent = sent + [[self.char.bos, self.char.eol, self.char.eos]]
             chars.extend(sent)
         chars, nchars = CorpusEncoder.get_batch(chars, self.char.pad, device)
 
@@ -168,8 +170,7 @@ def chunks(it, size):
         yield buf
 
 
-def dummy_processor(line):
-    return line.split(), {}
+def dummy_processor(line): return line.split(), {}
 
 
 class LineCorpus:
@@ -204,6 +205,25 @@ class LineCorpus:
         if buf:
             nbatches = len(buf) // batch_size
             yield from self.prepare_buffer(buf[:nbatches * batch_size], nbatches)
+
+
+class TruncatedLineCorpus(LineCorpus):
+    def __init__(self, *args, bptt=35, **kwargs):
+        self.bptt = bptt
+        super().__init__(*args, **kwargs)
+
+    def __iter__(self):
+        with open(self.fpath) as f:
+            sent = []
+            for line in f:
+                while len(sent) >= self.bptt:
+                    yield sent[:self.bptt], {}  # no conds
+                    sent = sent[self.bptt:]
+                line = line.strip()
+                if line:
+                    line, _ = self.processor(line)  # ignore conds
+                    sent.extend(line)
+            if sent: yield sent, {}
 
 
 def get_final_phonology(phon):

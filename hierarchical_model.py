@@ -384,10 +384,18 @@ if __name__ == '__main__':
         torch_utils.init_pretrained_embeddings(args.pretrained_wembs, encoder, lm.wembs)
     lm.to(args.device)
 
+    # trainer
+    trainer = getattr(torch.optim, args.trainer)(
+        lm.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    print(trainer)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        trainer,
+        list(range(0, 20, 5)) + list(range(20, 30, 5)) + list(range(30, args.epochs, 2)),
+        gamma=args.lr_weight)
+
     print("Training model")
     print("Storing model to path {}".format(lm.modelname))
-    lm.train_model(train, encoder, epochs=args.epochs, minibatch=args.minibatch,
-                   dev=dev, lr=args.lr, trainer=args.trainer, clipping=args.clipping,
-                   repfreq=args.repfreq, checkfreq=args.checkfreq,
-                   weight_decay=args.weight_decay,
-                   lr_weight=args.lr_weight, bptt=args.bptt)
+    lm.train_model(train, encoder, trainer, scheduler,
+                   epochs=args.epochs, minibatch=args.minibatch,
+                   dev=dev, clipping=args.clipping, bptt=args.bptt,
+                   repfreq=args.repfreq, checkfreq=args.checkfreq)

@@ -340,7 +340,7 @@ class RNNLanguageModel(nn.Module):
 
         return (hyps, conds), probs, hidden, cache
 
-    def dev(self, corpus, encoder, batch_size, best_loss, fails, trainer, lr_weight,
+    def dev(self, corpus, encoder, batch_size, best_loss, fails, scheduler,
             nsamples=10, target_dir='./models'):
 
         hidden = None
@@ -358,6 +358,11 @@ class RNNLanguageModel(nn.Module):
         tloss = self.loss_formatter(tloss / tinsts)
         print("Dev loss: {:g}".format(tloss))
 
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            scheduler.step(tloss)
+        else:
+            scheduler.step()
+
         if tloss < best_loss:
             print("New best dev loss: {:g}".format(tloss))
             best_loss = tloss
@@ -366,10 +371,6 @@ class RNNLanguageModel(nn.Module):
         else:
             fails += 1
             print("Failed {} time to improve best dev loss: {}".format(fails, best_loss))
-            # update lr
-            for pgroup in trainer.param_groups:
-                pgroup['lr'] = pgroup['lr'] * lr_weight
-            print(trainer)
 
         print("Sampling #{} examples".format(nsamples))
         print()
@@ -383,21 +384,9 @@ class RNNLanguageModel(nn.Module):
 
         return best_loss, fails
 
-    def train_model(self, corpus, encoder, epochs=5, lr=0.001, clipping=5, dev=None,
-                    weight_decay=0, minibatch=15, patience=3, trainer='Adam',
-                    repfreq=1000, checkfreq=0, lr_weight=1, bptt=1,
-                    target_dir='./models'):
-
-        # get trainer
-        if trainer.lower() == 'adam':
-            trainer = torch.optim.Adam(
-                self.parameters(), lr=lr, amsgrad=False, weight_decay=weight_decay)
-        elif trainer.lower() == 'sgd':
-            trainer = torch.optim.SGD(
-                self.parameters(), lr=lr, weight_decay=weight_decay)
-        else:
-            raise ValueError("Unknown trainer: {}".format(trainer))
-        print(trainer)
+    def train_model(self, corpus, encoder, trainer, scheduler, epochs=5,
+                    clipping=5, dev=None, minibatch=15, patience=3, 
+                    repfreq=1000, checkfreq=0, bptt=1, target_dir='./models'):
 
         # local variables
         hidden = None
@@ -446,14 +435,14 @@ class RNNLanguageModel(nn.Module):
                 if dev and checkfreq and idx and idx % (checkfreq // minibatch) == 0:
                     self.eval()
                     best_loss, fails = self.dev(
-                        dev, encoder, minibatch, best_loss, fails, trainer, lr_weight,
+                        dev, encoder, minibatch, best_loss, fails, scheduler,
                         target_dir=target_dir)
                     self.train()
 
             if dev and not checkfreq:
                 self.eval()
                 best_loss, fails = self.dev(
-                    dev, encoder, minibatch, best_loss, fails, trainer, lr_weight,
+                    dev, encoder, minibatch, best_loss, fails, scheduler,
                     target_dir=target_dir)
                 self.train()
 
@@ -511,8 +500,16 @@ if __name__ == '__main__':
     print("Storing model to path {}".format(lm.modelname))
     lm.to(args.device)
 
+    # trainer
+    trainer = getattr(torch.optim, args.trainer)(
+        lm.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    print(trainer)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        trainer, patience=1, factor=args.lr_weight)
+
     print("Training model")
-    lm.train_model(train, encoder, epochs=args.epochs, minibatch=args.minibatch,
-                   dev=dev, lr=args.lr, trainer=args.trainer, clipping=args.clipping,
-                   repfreq=args.repfreq, checkfreq=args.checkfreq,
-                   lr_weight=args.lr_weight, bptt=args.bptt)
+    lm.train_model(train, encoder, trainer, scheduler,
+                   epochs=args.epochs, minibatch=args.minibatch,
+                   dev=dev, clipping=args.clipping, bptt=args.bptt,
+                   repfreq=args.repfreq, checkfreq=args.checkfreq)
+
