@@ -41,8 +41,10 @@ class RNNLanguageModel(nn.Module):
 
         # embeddings
         self.wembs = nn.Embedding(wvocab, wemb_dim, padding_idx=encoder.word.pad)
-        self.cembs = nn.Embedding(cvocab, cemb_dim, padding_idx=encoder.char.pad)
-        self.cembs_rnn = CustomBiLSTM(cemb_dim, cemb_dim//2)
+        self.cembs = self.cembs_rnn = None
+        if cemb_dim > 0:
+            self.cembs = nn.Embedding(cvocab, cemb_dim, padding_idx=encoder.char.pad)
+            self.cembs_rnn = CustomBiLSTM(cemb_dim, cemb_dim//2)
         input_dim = wemb_dim + cemb_dim
 
         # conds
@@ -150,11 +152,11 @@ class RNNLanguageModel(nn.Module):
     def forward(self, word, nwords, char, nchars, conds, hidden=None, project=True):
         # dropout!: embedding dropout (dropoute), not implemented
         # (seq x batch x wemb_dim)
-        wembs = self.wembs(word)
-        # (seq x batch x cemb_dim)
-        cembs = self.embed_chars(char, nchars, nwords)
-
-        embs = torch.cat([wembs, cembs], -1)
+        embs = self.wembs(word)
+        if self.cembs is not None:
+            # (seq x batch x cemb_dim)
+            cembs = self.embed_chars(char, nchars, nwords)
+            embs = torch.cat([embs, cembs], -1)
 
         if conds:
             conds = [self.conds[c](conds[c]) for c in sorted(conds)]
@@ -263,9 +265,10 @@ class RNNLanguageModel(nn.Module):
                     break
 
                 # embeddings
-                wemb = self.wembs(word.unsqueeze(0))
-                cemb = self.embed_chars(char, nchars, nwords)
-                embs = torch.cat([wemb, cemb], -1)
+                embs = self.wembs(word.unsqueeze(0))
+                if self.cembs is not None:
+                    cemb = self.embed_chars(char, nchars, nwords)
+                    embs = torch.cat([embs, cemb], -1)
                 if conds:
                     embs = torch.cat([embs, *bconds], -1)
 
@@ -465,6 +468,7 @@ if __name__ == '__main__':
     # train
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--lr_weight', type=float, default=1.0)
+    parser.add_argument('--weight_decay', type=float, default=1.2e-6)
     parser.add_argument('--trainer', default='Adam')
     parser.add_argument('--clipping', type=float, default=5.0)
     parser.add_argument('--epochs', type=int, default=20)

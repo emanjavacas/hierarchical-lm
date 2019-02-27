@@ -268,6 +268,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--lr_weight', type=float, default=1.0)
     parser.add_argument('--trainer', default='Adam')
+    parser.add_argument('--weight_decay', type=float, default=1.2e-6)
     parser.add_argument('--clipping', type=float, default=5.0)
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--bptt', type=int, default=1)
