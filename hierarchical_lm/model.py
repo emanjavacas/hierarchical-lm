@@ -13,9 +13,9 @@ import torch.nn.functional as F
 
 import tqdm
 
-import utils
-import torch_utils
-from lstm import CustomBiLSTM
+from . import utils
+from . import torch_utils
+from .lstm import CustomBiLSTM
 
 
 class RNNLanguageModel(nn.Module):
@@ -195,9 +195,10 @@ class RNNLanguageModel(nn.Module):
         # dropout!: output dropout (dropouto)
         outs = torch_utils.sequential_dropout(outs, self.dropout, self.training)
 
-        logits = self.proj(outs) if project else outs
+        if project:
+            return self.proj(outs), hidden
 
-        return logits, hidden
+        return outs, hidden
 
     def loss(self, logits, word, nwords, char, nchars):
         logits, targets = logits[:-1], word[1:]
@@ -388,7 +389,7 @@ class RNNLanguageModel(nn.Module):
         return best_loss, fails
 
     def train_model(self, corpus, encoder, trainer, scheduler, epochs=5,
-                    clipping=5, dev=None, minibatch=15, patience=3, 
+                    clipping=5, dev=None, minibatch=15, patience=3,
                     repfreq=1000, checkfreq=0, bptt=1, target_dir='./models'):
 
         # local variables
@@ -448,6 +449,59 @@ class RNNLanguageModel(nn.Module):
                     dev, encoder, minibatch, best_loss, fails, scheduler,
                     target_dir=target_dir)
                 self.train()
+
+    def get_next_probability(self, encoder, sents, conds=None, hidden=None):
+        (word, nwords), (char, nchars), conds = encoder.transform_batch(
+            sents, conds, self.device)
+        # drop </l> tokens
+        word, nwords, char = word[:-1], nwords - 1, char[:, :-1]
+        nchars = nchars.masked_select(
+            torch.ones_like(nchars).index_fill(0, nwords.cumsum(0) - 1, 0).byte())
+        logits, _ = self(word, nwords, char, nchars, conds, hidden=hidden)
+        # get last item in sequence: (seq_len x batch x vocab) => (batch x vocab)
+        probs = F.softmax(logits[-1])
+        targets = [encoder.word.i2w[i] for i in range(len(encoder.word.i2w))]
+
+        return targets, [[p.item() for p in b] for b in probs]
+
+    def get_probabilities(self, encoder, sents, conds=None, hidden=None):
+        (word, nwords), (char, nchars), conds = encoder.transform_batch(
+            sents, conds, self.device)
+        # drop </l> tokens
+        word, nwords, char = word[:-1], nwords - 1, char[:, :-1]
+        nchars = nchars.masked_select(
+            torch.ones_like(nchars).index_fill(0, nwords.cumsum(0) - 1, 0).byte())
+        logits, _ = self(word, nwords, char, nchars, conds, hidden=hidden)
+        # (seq_len x batch x vocab)
+        probs = F.softmax(logits, dim=2)
+        # select probability assigned to true value
+        # drop <l> from input and </l> tokens from probabilities
+        probs = torch.gather(probs[:-1], 2, word[1:].unsqueeze(2)).squeeze(2)
+
+        targets, word_probs = [], []
+        for sent, prob in zip(sents, probs.transpose(0, 1)):
+            word_probs.append(prob[:len(sent)].detach().numpy())
+            targets.append(sent)
+
+        return targets, word_probs
+
+    def get_activations(self, encoder, sents, conds=None, hidden=None):
+        # TODO: get activations from intermediate layers
+        (word, nwords), (char, nchars), conds = encoder.transform_batch(
+            sents, conds, self.device)
+        # (seq_len x batch x hidden_dim)
+        outs, _ = self(word, nwords, char, nchars, conds, hidden=hidden, project=False)
+        targets, activations = [], []
+        for sent, t in zip(sents, outs.transpose(0, 1)):
+            t = t.detach().numpy()
+            # remove <l> and </l>
+            t = t[1:len(sent)+1]
+            # transpose to (hidden_dim x seq_len)
+            t = t.T
+            targets.append(sent)
+            activations.append(t)
+
+        return targets, activations
 
 
 if __name__ == '__main__':

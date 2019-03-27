@@ -9,10 +9,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import utils
-import torch_utils
-from model import RNNLanguageModel
-from lstm import CustomBiLSTM, CustomLSTM
+from . import utils
+from . import torch_utils
+from .model import RNNLanguageModel
+from .lstm import CustomBiLSTM
 
 
 class HierarchicalLanguageModel(RNNLanguageModel):
@@ -87,7 +87,7 @@ class HierarchicalLanguageModel(RNNLanguageModel):
         kwargs = {'dropout': self.dropout, 'custom_cemb_cell': self.custom_cemb_cell}
         return args, kwargs
 
-    def forward(self, word, nwords, char, nchars, conds, hidden=None):
+    def forward(self, word, nwords, char, nchars, conds, hidden=None, project=True):
         # - embeddings
         embs = []
         # (seq x batch x wemb_dim)
@@ -166,9 +166,10 @@ class HierarchicalLanguageModel(RNNLanguageModel):
         # dropout!: char-level output dropout
         couts = torch_utils.sequential_dropout(couts, self.dropout, self.training)
         # logits: (nchars x nwords - batch x vocab)
-        logits = self.proj(couts)
+        if project:
+            return self.proj(couts), hidden
 
-        return logits, hidden
+        return couts, hidden
 
     def loss(self, logits, word, nwords, char, nchars):
         breaks = list(itertools.accumulate(nwords))

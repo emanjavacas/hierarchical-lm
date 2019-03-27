@@ -1,10 +1,10 @@
 
 import os
 
-from model import RNNLanguageModel
-from char_model import CharLanguageModel, CharLevelCorpusEncoder
-from hierarchical_model import HierarchicalLanguageModel
-import utils
+from .model import RNNLanguageModel
+from .char_model import CharLanguageModel, CharLevelCorpusEncoder
+from .hierarchical_model import HierarchicalLanguageModel
+from . import utils
 
 
 def model_loader(modelpath):

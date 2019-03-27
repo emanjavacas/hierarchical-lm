@@ -8,9 +8,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import utils
-import torch_utils
-from model import RNNLanguageModel
+from . import utils
+from . import torch_utils
+from .model import RNNLanguageModel
 
 
 class CharLevelCorpusEncoder(utils.CorpusEncoder):
@@ -92,7 +92,7 @@ class CharLanguageModel(RNNLanguageModel):
         kwargs = {'dropout': self.dropout}
         return args, kwargs
 
-    def forward(self, word, nwords, char, nchars, conds, hidden=None):
+    def forward(self, word, nwords, char, nchars, conds, hidden=None, project=True):
         # dropout!: embedding dropout (dropoute), not implemented
         # - embeddings
         # (seq x batch x emb_dim)
@@ -138,9 +138,10 @@ class CharLanguageModel(RNNLanguageModel):
         outs = torch_utils.sequential_dropout(outs, self.dropout, self.training)
 
         # logits: (seq_len x batch x vocab)
-        logits = self.proj(outs)
+        if project:
+            return self.proj(outs), hidden
 
-        return logits, hidden
+        return outs, hidden
 
     def loss(self, logits, word, nwords, char, nchars):
         logits, targets = logits[:-1], char[1:]
@@ -248,6 +249,36 @@ class CharLanguageModel(RNNLanguageModel):
             hyps.append(''.join(hyp[::-1] if encoder.reverse else hyp))
 
         return (hyps, conds), probs, hidden, cache
+
+    def get_next_probability(self, encoder, sents, conds=None, hidden=None):
+        (word, nwords), (char, nchars), conds = encoder.transform_batch(
+            sents, conds, self.device)
+        # drop </l> tokens
+        char, nchars = char[:-1], nchars - 1
+        logits, hidden = self(word, nwords, char, nchars, conds, hidden=hidden)
+        # get last item in sequence: (seq_len x batch x vocab) => (batch x vocab)
+        probs = F.softmax(logits[-1])
+        targets = [encoder.char.i2w[i] for i in range(len(encoder.char.i2w))]
+        return targets, [[p.item() for p in b] for b in probs]
+
+    def get_activations(self, encoder, sents, conds=None, hidden=None):
+        # TODO: get activations from intermediate layers
+        (word, nwords), (char, nchars), conds = encoder.transform_batch(
+            sents, conds, self.device)
+        # ()
+        outs, _ = self(word, nwords, char, nchars, conds, hidden=hidden, project=False)
+        targets, activations = [], []
+        for sent, t in zip(sents, outs.transpose(0, 1)):
+            sent = ' '.join(sent)
+            t = t.detach().numpy()
+            # remove <l> and </l>
+            t = t[1:len(sent)+1]
+            # transpose to (hidden_dim x seq_len)
+            t = t.T
+            targets.append(list(sent))
+            activations.append(t)
+
+        return targets, activations
 
 
 if __name__ == '__main__':

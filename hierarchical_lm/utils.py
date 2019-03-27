@@ -127,7 +127,8 @@ class CorpusEncoder:
 
         return cls(word, char, conds, obj['reverse'])
 
-    def transform_batch(self, sents, conds, device='cpu'):  # conds is a list of dicts
+    def transform_batch(self, sents, conds=None, device='cpu'):
+        # conds is a list of dicts
         if self.reverse:
             sents = [s[::-1] for s in sents]
 
