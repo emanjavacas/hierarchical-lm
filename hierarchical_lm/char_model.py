@@ -324,7 +324,7 @@ if __name__ == '__main__':
         conds = set(args.conds.split(','))
     train, dev = LineCorpus(args.train, conds=conds), LineCorpus(args.dev, conds=conds)
     encoder = CharLevelCorpusEncoder.from_corpus(
-        train, dev, most_common=args.maxsize, reverse=args.reverse)
+        train, dev, most_common=args.maxsize, include_space=True, reverse=args.reverse)
     print("... took {} secs".format(time.time() - start))
 
     print("Building model")

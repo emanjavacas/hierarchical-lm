@@ -90,7 +90,7 @@ class CorpusEncoder:
         return t, lengths
 
     @classmethod
-    def from_corpus(cls, *corpora, most_common=25000, **kwargs):
+    def from_corpus(cls, *corpora, most_common=25000, include_space=False, **kwargs):
         # create counters
         w2i = collections.Counter()
         conds_w2i = collections.defaultdict(collections.Counter)
@@ -99,7 +99,8 @@ class CorpusEncoder:
                 conds_w2i[cond][conds[cond]] += 1
             for word in sent:
                 w2i[word] += 1
-        c2i = collections.Counter(c for w in w2i for c in w)
+        c2i = collections.Counter(
+            c for w in w2i for c in list(w) + ([' '] if include_space else []))
 
         # create vocabs
         word = Vocab(w2i, most_common=most_common, bos=BOS, eos=EOS, unk=UNK, pad=PAD)
