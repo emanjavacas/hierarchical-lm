@@ -167,3 +167,42 @@ def init_pretrained_embeddings(path, encoder, embedding):
         embedding.weight.data[embedding.padding_idx].zero_()
 
     print("Initialized {}/{} embeddings".format(inits, embedding.num_embeddings))
+
+
+def apply_temperature(logprob, tau):
+    return logprob / tau
+
+
+def apply_tok_k_sampling(logprob, top_k):
+    top_k = min(top_k, logprob.size(-1))
+    min_logprob = torch.topk(logprob, top_k, dim=1)[0][:, -1]
+    drop = logprob < min_logprob[:, None]
+    new_logprob = logprob.clone()
+    new_logprob[drop] = -float('inf')
+    return new_logprob
+
+
+def apply_nucleus_sampling(logprob, top_p):
+    logprob_sorted, sort_idxs = torch.sort(logprob, descending=True)
+    cumsum = torch.cumsum(torch.softmax(logprob_sorted, dim=-1), dim=-1)
+    drop = cumsum > top_p
+    # shift (ensure always gets at least one symbol)
+    drop[:, 1:] = drop[:, :-1].clone()
+    drop[:, 0] = 0
+
+    drop = drop.scatter(1, sort_idxs, drop)
+    new_logprob = logprob.clone()
+    new_logprob[drop] = -float('inf')
+
+    return new_logprob
+
+
+def sample_distribution(logprob, tau, top_k, top_p):
+    logprob = apply_temperature(logprob, tau)
+
+    if top_k:
+        logprob = apply_tok_k_sampling(logprob, top_k)
+    elif top_p:
+        logprob = apply_nucleus_sampling(logprob, top_p)
+
+    return logprob.exp().multinomial(1)

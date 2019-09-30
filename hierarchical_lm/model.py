@@ -237,7 +237,8 @@ class RNNLanguageModel(nn.Module):
         return math.exp(min(loss, 100))
 
     def sample(self, encoder, nsyms=100, batch=1,
-               conds=None, hidden=None, tau=1.0,
+               conds=None, hidden=None,
+               tau=1.0, top_k=0, top_p=0.0,
                cache=None, alpha=0.0, theta=0.0,
                avoid_unk=False):
         """
@@ -319,7 +320,7 @@ class RNNLanguageModel(nn.Module):
                     logprob = F.log_softmax(logits, dim=-1)
 
                 # sample
-                word = (logprob / tau).exp().multinomial(1)
+                word = torch_utils.sample_distribution(logprob, tau, top_k, top_p)
                 score = logprob.gather(1, word)
                 word, score = word.squeeze(1), score.squeeze(1)
 

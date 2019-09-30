@@ -197,7 +197,9 @@ class HierarchicalLanguageModel(RNNLanguageModel):
         return math.log2(math.e) * loss
 
     def sample(self, encoder, nsyms=50, max_sym_len=10, batch=1,
-               conds=None, hidden=None, tau=1.0, cache=None, **kwargs):
+               conds=None, hidden=None,
+               tau=1.0, top_p=0, top_k=0,
+               cache=None, **kwargs):
         """
         Generate stuff
         """
@@ -273,10 +275,9 @@ class HierarchicalLanguageModel(RNNLanguageModel):
                     # (1 x batch x hidden_dim)
                     couts, chidden = self.cout_rnn(cemb, chidden)
                     logits = self.proj(couts).squeeze(0)
-                    # sample
                     logprob = F.log_softmax(logits, dim=-1)
-                    # (1 x batch) -> (batch)
-                    cinp = (logprob / tau).exp().multinomial(1)
+                    # sample
+                    cinp = torch_utils.sample_distribution(logprob, tau, top_k, top_p)
                     score = logprob.gather(1, cinp)
                     cinp, score = cinp.squeeze(1), score.squeeze(1)
 

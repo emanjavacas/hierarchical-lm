@@ -166,7 +166,9 @@ class CharLanguageModel(RNNLanguageModel):
         return math.log2(math.e) * loss
 
     def sample(self, encoder, nsyms=100, batch=1,
-               conds=None, hidden=None, tau=1.0, cache=None, **kwargs):
+               tau=1.0, top_k=0, top_p=0,
+               conds=None, hidden=None,
+               cache=None, **kwargs):
         """
         Generate stuff
         """
@@ -223,9 +225,11 @@ class CharLanguageModel(RNNLanguageModel):
                 # get probs
                 # (1 x batch x vocab) -> (batch x vocab)
                 logits = self.proj(outs).squeeze(0)
-                preds = F.log_softmax(logits, dim=-1)
-                char = (preds / tau).exp().multinomial(1)
-                score = preds.gather(1, char)
+                logprob = F.log_softmax(logits, dim=-1)
+
+                # sample
+                char = torch_utils.sample_distribution(logprob, tau, top_k, top_p)
+                score = logprob.gather(1, char)
                 char, score = char.squeeze(1), score.squeeze(1)
 
                 # update mask
