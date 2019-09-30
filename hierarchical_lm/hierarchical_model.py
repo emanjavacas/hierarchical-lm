@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 from . import utils
 from . import torch_utils
-from .model import RNNLanguageModel
+from .model import RNNLanguageModel, drop_eol
 from .lstm import CustomBiLSTM
 
 
@@ -324,6 +324,21 @@ class HierarchicalLanguageModel(RNNLanguageModel):
             hyps.append(' '.join(hyp[::-1] if encoder.reverse else hyp))
 
         return (hyps, conds), probs, hidden, cache
+
+    def get_next_probability(self, encoder, sents, conds=None, hidden=None):
+        (word, nwords), (char, nchars), conds = encoder.transform_batch(
+            sents, conds, self.device)
+        # (nchars x nwords - batch x vocab)
+        logits, _ = self(word, nwords, char, nchars, conds, hidden=hidden)
+        # project to probability
+        logits = F.softmax(logits, dim=2)
+        # remove </l> from nwords & nchars (</l> is already dropped in logits)
+        word, nwords, char, nchars = drop_eol(word, nwords, char, nchars)
+        # get last activation from logits (pre </w>)
+        logits = logits[nchars-2, torch.arange(len(sents))]
+        # get last word in sentence (-1 because of 0-index)
+        logits = logits[nwords-1]
+        return logits, word, nwords, char, nchars
 
 
 if __name__ == '__main__':

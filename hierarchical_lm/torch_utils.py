@@ -156,8 +156,6 @@ def init_pretrained_embeddings(path, encoder, embedding):
                 if idx == 0:
                     print("Skipping header")
                     continue
-                else:
-                    raise ValueError("Unexpected embeddings size: {}".format(dim))
 
             # add word
             if word in encoder.word.w2i:

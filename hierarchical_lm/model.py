@@ -18,6 +18,23 @@ from . import torch_utils
 from .lstm import CustomBiLSTM
 
 
+def drop_eol(word, nwords, char, nchars):
+    char_mask = torch.ones_like(nchars).index_fill(0, nwords.cumsum(0) - 1, 0).byte()
+    seqlen, batch = len(char), len(nchars) - word.size(1)
+    char = char.masked_select(char_mask[None, :].expand_as(char)).view(seqlen, batch)
+    nchars = nchars.masked_select(char_mask)
+    word, nwords = word[:-1], nwords - 1
+    return word, nwords, char, nchars
+
+
+def prepare_input_query(encoder, sents, device, conds=None):
+    (word, nwords), (char, nchars), conds = encoder.transform_batch(
+        sents, conds, device)
+    # drop </l> tokens
+    word, nwords, char, nchars = drop_eol(word, nwords, char, nchars)
+    return (word, nwords), (char, nchars), conds
+
+
 class RNNLanguageModel(nn.Module):
     def __init__(self, encoder, layers, wemb_dim, cemb_dim, hidden_dim, cond_dim,
                  dropout=0.0, tie_weights=False):
@@ -451,12 +468,8 @@ class RNNLanguageModel(nn.Module):
                 self.train()
 
     def get_next_probability(self, encoder, sents, conds=None, hidden=None):
-        (word, nwords), (char, nchars), conds = encoder.transform_batch(
-            sents, conds, self.device)
-        # drop </l> tokens
-        word, nwords, char = word[:-1], nwords - 1, char[:, :-1]
-        nchars = nchars.masked_select(
-            torch.ones_like(nchars).index_fill(0, nwords.cumsum(0) - 1, 0).byte())
+        (word, nwords), (char, nchars), conds = prepare_input_query(
+            encoder, sents, self.device, conds=conds)
         logits, _ = self(word, nwords, char, nchars, conds, hidden=hidden)
         # get last item in sequence: (seq_len x batch x vocab) => (batch x vocab)
         probs = F.softmax(logits[-1])
@@ -465,12 +478,8 @@ class RNNLanguageModel(nn.Module):
         return targets, [[p.item() for p in b] for b in probs]
 
     def get_probabilities(self, encoder, sents, conds=None, hidden=None):
-        (word, nwords), (char, nchars), conds = encoder.transform_batch(
-            sents, conds, self.device)
-        # drop </l> tokens
-        word, nwords, char = word[:-1], nwords - 1, char[:, :-1]
-        nchars = nchars.masked_select(
-            torch.ones_like(nchars).index_fill(0, nwords.cumsum(0) - 1, 0).byte())
+        (word, nwords), (char, nchars), conds = prepare_input_query(
+            encoder, sents, self.device, conds=conds)
         logits, _ = self(word, nwords, char, nchars, conds, hidden=hidden)
         # (seq_len x batch x vocab)
         probs = F.softmax(logits, dim=2)

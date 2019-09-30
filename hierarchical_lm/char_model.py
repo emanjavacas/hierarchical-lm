@@ -27,8 +27,11 @@ class CharLevelCorpusEncoder(utils.CorpusEncoder):
         for s in sents:
             if self.reverse:    # reverse chars as well
                 s = [syl[::-1] for syl in s]
-            # remove syllable structure
-            chars.append(self.char.transform(' '.join(s)))
+            # remove syllable structure but keep trailing space
+            s = ' '.join(s)
+            if s[-1] == ' ':
+                s = s[:-1]
+            chars.append(self.char.transform(s))
 
         chars, nchars = utils.CorpusEncoder.get_batch(chars, self.char.pad, device)
 
